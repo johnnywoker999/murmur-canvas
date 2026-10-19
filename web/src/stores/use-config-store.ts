@@ -1,0 +1,909 @@
+import { useMemo } from "react";
+import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { nanoid } from "nanoid";
+
+import { localForageStorage } from "@/lib/localforage-storage";
+
+import {
+    DEFAULT_BUILTIN_COMFYUI_FRAME_VIDEO_WORKFLOW,
+    DEFAULT_BUILTIN_COMFYUI_I2I_WORKFLOW,
+    DEFAULT_BUILTIN_COMFYUI_INPAINT_WORKFLOW,
+    DEFAULT_BUILTIN_COMFYUI_QWEN_IMAGE_21_WORKFLOW,
+    DEFAULT_BUILTIN_COMFYUI_T2I_WORKFLOW,
+    DEFAULT_BUILTIN_COMFYUI_TEXT_WORKFLOW,
+    DEFAULT_BUILTIN_COMFYUI_VIDEO_WORKFLOW,
+    DEFAULT_CLOUD_COMFYUI_FRAME_VIDEO_WORKFLOW,
+    DEFAULT_CLOUD_COMFYUI_I2I_WORKFLOW,
+    DEFAULT_CLOUD_COMFYUI_INPAINT_WORKFLOW,
+    DEFAULT_CLOUD_COMFYUI_T2I_WORKFLOW,
+    DEFAULT_CLOUD_COMFYUI_TEXT_WORKFLOW,
+    DEFAULT_CLOUD_COMFYUI_VIDEO_WORKFLOW,
+    DEFAULT_LOCAL_COMFYUI_FRAME_VIDEO_WORKFLOW,
+    DEFAULT_LOCAL_COMFYUI_I2I_WORKFLOW,
+    DEFAULT_LOCAL_COMFYUI_INPAINT_WORKFLOW,
+    DEFAULT_LOCAL_COMFYUI_T2I_WORKFLOW,
+    DEFAULT_LOCAL_COMFYUI_TEXT_WORKFLOW,
+    DEFAULT_LOCAL_COMFYUI_VIDEO_WORKFLOW,
+    DEFAULT_BUILTIN_COMFYUI_AUDIO_WORKFLOW,
+    DEFAULT_BUILTIN_COMFYUI_FACE_REFINE_WORKFLOW,
+    getDefaultComfyuiWorkflows,
+    getDefaultComfyWorkflowItems,
+} from "@/services/api/comfyui-default-workflows";
+import i18n from "@/i18n";
+
+export type ApiCallFormat = "openai" | "gemini" | "comfyui";
+export type ModelCapability = "image" | "video" | "text" | "audio";
+export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
+
+export type WorkflowCategory = "t2i" | "i2i" | "inpaint" | "text" | "omniVideo" | "frameVideo" | "audio" | "faceRefine" | "depthVideo" | "superResolve" | "angle" | "upscale";
+
+export const WORKFLOW_CATEGORY_TO_CHANNEL_FIELD: Record<WorkflowCategory, keyof ModelChannel> = {
+    t2i: "comfyuiT2iWorkflow",
+    i2i: "comfyuiI2iWorkflow",
+    inpaint: "comfyuiInpaintWorkflow",
+    text: "comfyuiTextWorkflow",
+    omniVideo: "comfyuiVideoWorkflow",
+    frameVideo: "comfyuiFrameVideoWorkflow",
+    audio: "comfyuiAudioWorkflow",
+    faceRefine: "comfyuiFaceRefineWorkflow",
+    depthVideo: "comfyuiDepthVideoWorkflow",
+    superResolve: "comfyuiSuperResolveWorkflow",
+    angle: "comfyuiAngleWorkflow",
+    upscale: "comfyuiUpscaleWorkflow",
+};
+
+export type ToolbarConfig = {
+    ids: string[];
+    showLabels: boolean;
+};
+
+export type ComfyWorkflowItem = {
+    id: string;
+    name: string;
+    category: WorkflowCategory;
+    json: Record<string, unknown>;
+    createdAt: number;
+    isBuiltin?: boolean;
+    isDefault?: boolean;
+    description?: string;
+};
+
+export type ComfyuiWorkflow = {
+    name: string;
+    json: Record<string, unknown>;
+    createdAt: number;
+    isBuiltin?: boolean;
+};
+
+export type ChannelModel = {
+    name: string;
+    capability: ModelCapability;
+    script?: string;
+    comfyuiWorkflow?: ComfyuiWorkflow;
+};
+
+export type ModelChannel = {
+    id: string;
+    name: string;
+    baseUrl: string;
+    apiKey: string;
+    apiFormat: ApiCallFormat;
+    models: ChannelModel[];
+    comfyuiProxyUrl?: string;
+    comfyuiProxyToken?: string;
+    workflows?: ComfyWorkflowItem[];
+    comfyuiT2iWorkflow?: ComfyuiWorkflow;
+    comfyuiI2iWorkflow?: ComfyuiWorkflow;
+    comfyuiInpaintWorkflow?: ComfyuiWorkflow;
+    comfyuiTextWorkflow?: ComfyuiWorkflow;
+    comfyuiVideoWorkflow?: ComfyuiWorkflow;
+    comfyuiFrameVideoWorkflow?: ComfyuiWorkflow;
+    comfyuiSuperResolveWorkflow?: ComfyuiWorkflow;
+    comfyuiAngleWorkflow?: ComfyuiWorkflow;
+    comfyuiUpscaleWorkflow?: ComfyuiWorkflow;
+    comfyuiAudioWorkflow?: ComfyuiWorkflow;
+    comfyuiFaceRefineWorkflow?: ComfyuiWorkflow;
+    comfyuiDepthVideoWorkflow?: ComfyuiWorkflow;
+};
+
+export type AiConfig = {
+    channelMode: "remote" | "local";
+    baseUrl: string;
+    apiKey: string;
+    apiFormat: ApiCallFormat;
+    channels: ModelChannel[];
+    channelId?: string;
+    workflowId?: string;
+    model: string;
+    imageModel: string;
+    videoModel: string;
+    textModel: string;
+    audioModel: string;
+    audioVoice: string;
+    audioFormat: string;
+    audioSpeed: string;
+    audioInstructions: string;
+    audioSeconds: string;
+    videoSeconds: string;
+    videoMode: string;
+    vquality: string;
+    videoGenerateAudio: string;
+    videoWatermark: string;
+    systemPrompt: string;
+    reasoningEffort: ReasoningEffort;
+    models: string[];
+    quality: string;
+    size: string;
+    background: string;
+    count: string;
+    canvasImageCount: string;
+    toolbar?: ToolbarConfig;
+};
+
+export type WebdavSyncConfig = {
+    url: string;
+    username: string;
+    password: string;
+    directory: string;
+    lastSyncedAt: string;
+};
+export type ConfigTabKey = "channels" | "toolbar" | "preferences" | "prompt-sources" | "webdav" | "local-storage";
+
+export const defaultToolbarConfig: ToolbarConfig = {
+    ids: [
+        "info", "delete", "saveAsset", "download",
+        "copyPrompt", "reversePrompt", "replace", "maskEdit", "crop", "split", "upscale", "view"
+    ],
+    showLabels: false,
+};
+
+export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
+const CHANNEL_MODEL_SEPARATOR = "::";
+
+/** Builtin channel default models with precise model names and capabilities. */
+export const COMFYUI_BUILTIN_DEFAULT_MODELS: ChannelModel[] = [
+    { name: "Z-Image-Turbo", capability: "image", comfyuiWorkflow: DEFAULT_BUILTIN_COMFYUI_T2I_WORKFLOW },
+    { name: "Flux2.Dev", capability: "image", comfyuiWorkflow: DEFAULT_BUILTIN_COMFYUI_I2I_WORKFLOW },
+    { name: "Qwen-Image-2.1", capability: "image", comfyuiWorkflow: DEFAULT_BUILTIN_COMFYUI_QWEN_IMAGE_21_WORKFLOW },
+    { name: "Qwen-Image Inpaint", capability: "image", comfyuiWorkflow: DEFAULT_BUILTIN_COMFYUI_INPAINT_WORKFLOW },
+    { name: "Qwen3.5 4B", capability: "text", comfyuiWorkflow: DEFAULT_BUILTIN_COMFYUI_TEXT_WORKFLOW },
+    { name: "MiniMax H3 全能影片", capability: "video", comfyuiWorkflow: DEFAULT_BUILTIN_COMFYUI_VIDEO_WORKFLOW },
+    { name: "MiniMax H3 首尾幀影片", capability: "video", comfyuiWorkflow: DEFAULT_BUILTIN_COMFYUI_FRAME_VIDEO_WORKFLOW },
+    { name: "MiniMax Music 03", capability: "audio", comfyuiWorkflow: DEFAULT_BUILTIN_COMFYUI_AUDIO_WORKFLOW },
+];
+
+export const COMFYUI_LOCAL_DEFAULT_MODELS: ChannelModel[] = COMFYUI_BUILTIN_DEFAULT_MODELS;
+export const COMFYUI_CLOUD_DEFAULT_MODELS: ChannelModel[] = COMFYUI_BUILTIN_DEFAULT_MODELS;
+export const COMFYUI_DEFAULT_MODELS: ChannelModel[] = COMFYUI_BUILTIN_DEFAULT_MODELS;
+
+export const defaultConfig: AiConfig = {
+    channelMode: "local",
+    baseUrl: "",
+    apiKey: "",
+    apiFormat: "comfyui",
+    channels: [
+        {
+            id: "builtin",
+            name: "系統內建 ComfyUI",
+            baseUrl: "",
+            apiKey: "",
+            apiFormat: "comfyui",
+            comfyuiProxyUrl: "http://127.0.0.1:8188",
+            comfyuiProxyToken: "",
+            workflows: getDefaultComfyWorkflowItems({ id: "builtin" }),
+            comfyuiT2iWorkflow: DEFAULT_BUILTIN_COMFYUI_QWEN_IMAGE_21_WORKFLOW,
+            comfyuiI2iWorkflow: DEFAULT_BUILTIN_COMFYUI_QWEN_IMAGE_21_WORKFLOW,
+            comfyuiInpaintWorkflow: DEFAULT_BUILTIN_COMFYUI_INPAINT_WORKFLOW,
+            comfyuiTextWorkflow: DEFAULT_BUILTIN_COMFYUI_TEXT_WORKFLOW,
+            comfyuiVideoWorkflow: DEFAULT_BUILTIN_COMFYUI_VIDEO_WORKFLOW,
+            comfyuiFrameVideoWorkflow: DEFAULT_BUILTIN_COMFYUI_FRAME_VIDEO_WORKFLOW,
+            comfyuiAudioWorkflow: DEFAULT_BUILTIN_COMFYUI_AUDIO_WORKFLOW,
+            comfyuiFaceRefineWorkflow: DEFAULT_BUILTIN_COMFYUI_FACE_REFINE_WORKFLOW,
+            models: COMFYUI_BUILTIN_DEFAULT_MODELS,
+        },
+    ],
+    model: "builtin::Qwen-Image-2.1",
+    imageModel: "builtin::Qwen-Image-2.1",
+    videoModel: "builtin::MiniMax H3 全能影片",
+    textModel: "builtin::Qwen3.5 4B",
+    audioModel: "builtin::MiniMax Music 03",
+    audioVoice: "alloy",
+    audioFormat: "mp3",
+    audioSpeed: "1",
+    audioInstructions: "",
+    audioSeconds: "60",
+    videoSeconds: "5",
+    videoMode: "omni",
+    vquality: "720",
+    videoGenerateAudio: "true",
+    videoWatermark: "false",
+    systemPrompt: "",
+    reasoningEffort: "auto",
+    models: [
+        "builtin::Qwen-Image-2.1",
+        "builtin::Z-Image-Turbo",
+        "builtin::Flux2.Dev",
+        "builtin::Qwen-Image Inpaint",
+        "builtin::Qwen3.5 4B",
+        "builtin::MiniMax H3 全能影片",
+        "builtin::MiniMax H3 首尾幀影片",
+        "builtin::MiniMax Music 03",
+    ],
+    quality: "auto",
+    size: "1:1",
+    background: "",
+    count: "1",
+    canvasImageCount: "1",
+    toolbar: defaultToolbarConfig,
+};
+
+export const defaultWebdavSyncConfig: WebdavSyncConfig = {
+    url: "",
+    username: "",
+    password: "",
+    directory: "infinite-canvas",
+    lastSyncedAt: "",
+};
+
+type ConfigStore = {
+    config: AiConfig;
+    webdav: WebdavSyncConfig;
+    isConfigOpen: boolean;
+    configTab: ConfigTabKey;
+    shouldPromptContinue: boolean;
+    setConfig: (config: AiConfig) => void;
+    updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
+    updateToolbarConfig: (patch: Partial<ToolbarConfig>) => void;
+    updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
+    isAiConfigReady: (config: AiConfig, model: string) => boolean;
+    openConfigDialog: (shouldPromptContinue?: boolean, tab?: ConfigTabKey) => void;
+    setConfigDialogOpen: (isOpen: boolean) => void;
+    clearPromptContinue: () => void;
+    saveChannelWorkflow: (channelId: string, workflow: ComfyWorkflowItem) => void;
+    saveWorkflowGlobally: (workflow: ComfyWorkflowItem) => void;
+    setChannelDefaultWorkflow: (channelId: string, category: WorkflowCategory, workflowId: string) => void;
+    resetChannelWorkflowToBuiltin: (channelId: string, workflowId: string) => void;
+};
+
+const VIDEO_KEYWORDS = ["video", "sora", "veo", "kling", "wan", "hailuo", "影片", "minimax"];
+
+export function boolConfig(value: string, fallback: boolean) {
+    return value ? value === "true" : fallback;
+}
+const AUDIO_KEYWORDS = ["audio", "tts", "speech", "voice", "music", "sound", "音訊", "語音"];
+const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "imagen", "flux", "sdxl", "stable-diffusion", "midjourney", "t2i", "i2i", "inpaint", "txt2img", "img2img", "圖", "turbo"];
+
+/** Best-effort default capability for a freshly fetched model name; user can override in the channel editor. */
+export function guessCapability(name: string): ModelCapability {
+    const value = name.toLowerCase();
+    if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword))) return "video";
+    if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
+    if (IMAGE_KEYWORDS.some((keyword) => value.includes(keyword))) return "image";
+    return "text";
+}
+
+function findChannelModel(config: AiConfig, value: string): { channel: ModelChannel; model: ChannelModel } | null {
+    const decoded = decodeChannelModel(value);
+    const name = decoded?.model || value;
+    const channel = decoded ? config.channels.find((item) => item.id === decoded.channelId) : config.channels.find((item) => item.models.some((model) => model.name === name));
+    const model = channel?.models.find((item) => item.name === name);
+    return channel && model ? { channel, model } : null;
+}
+
+export function modelCapabilityOf(config: AiConfig, value: string): ModelCapability | undefined {
+    return findChannelModel(config, value)?.model.capability;
+}
+
+function isInpaintModelName(name: string): boolean {
+    const lower = name.toLowerCase();
+    return lower.includes("inpaint") || name.includes("區域性編輯") || name.includes("區域性修改") || name.includes("區域性") || name.includes("遮罩");
+}
+
+export function modelMatchesCapability(config: AiConfig, value: string, capability?: ModelCapability) {
+    if (!capability) return true;
+    if (capability === "image") {
+        const decoded = decodeChannelModel(value);
+        const name = decoded?.model || value;
+        if (isInpaintModelName(name)) return false;
+    }
+    return modelCapabilityOf(config, value) === capability;
+}
+
+export function resolveModelForCapability(config: AiConfig, currentModel: string | undefined, capability: ModelCapability) {
+    const defaultModel = capability === "image" ? config.imageModel : capability === "video" ? config.videoModel : capability === "audio" ? config.audioModel : config.textModel;
+    const fallbackModel = capability === "image" ? defaultConfig.imageModel : capability === "video" ? defaultConfig.videoModel : capability === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
+    if (currentModel && modelMatchesCapability(config, currentModel, capability)) return currentModel;
+    if (defaultModel && modelMatchesCapability(config, defaultModel, capability)) return defaultModel;
+    return fallbackModel;
+}
+
+export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
+    if (!capability) return config.models;
+    return config.channels.flatMap((channel) =>
+        channel.models
+            .filter((model) => {
+                if (model.capability !== capability) return false;
+                if (capability === "image" && isInpaintModelName(model.name)) return false;
+                return true;
+            })
+            .map((model) => encodeChannelModel(channel.id, model.name))
+    );
+}
+
+/** Inpaint workflow options per ComfyUI channel, for the mask-edit dialog selector. */
+export function inpaintModelOptions(config: AiConfig) {
+    return config.channels.flatMap((channel) => {
+        if (channel.apiFormat !== "comfyui") return [];
+        const models = channel.models.filter((model) => model.capability === "image" && isInpaintModelName(model.name) && model.comfyuiWorkflow);
+        if (models.length) return models.map((model) => ({ value: encodeChannelModel(channel.id, model.name), label: `${channel.name} · ${model.name}` }));
+        if (channel.comfyuiInpaintWorkflow) {
+            const fallback = channel.models.find((model) => model.capability === "image");
+            return fallback ? [{ value: encodeChannelModel(channel.id, fallback.name), label: `${channel.name} · Inpaint` }] : [];
+        }
+        return [];
+    });
+}
+
+/** The user script (if any) attached to a model; empty string means use the system default call. */
+export function resolveModelScript(config: AiConfig, value: string) {
+    return findChannelModel(config, value)?.model.script?.trim() || "";
+}
+
+export function isAiConfigReady(config: AiConfig, model: string) {
+    if (!model.trim()) return false;
+    const channel = resolveModelChannel(config, model);
+    if (channel) return isChannelReady(channel);
+    return config.channels.some((c) => isChannelReady(c));
+}
+
+export function isChannelReady(channel: ModelChannel) {
+    return Boolean((channel.comfyuiProxyUrl || "").trim());
+}
+
+export const useConfigStore = create<ConfigStore>()(
+    persist(
+        (set, get) => ({
+            config: defaultConfig,
+            webdav: defaultWebdavSyncConfig,
+            isConfigOpen: false,
+            configTab: "channels",
+            shouldPromptContinue: false,
+            setConfig: (config) => set({ config }),
+            updateConfig: (key, value) =>
+                set((state) => ({
+                    config: {
+                        ...state.config,
+                        [key]: value,
+                        ...(key === "imageModel" ? { model: value as string } : {}),
+                    },
+                })),
+            updateToolbarConfig: (patch) =>
+                set((state) => {
+                    const currentToolbar = state.config.toolbar || defaultToolbarConfig;
+                    return {
+                        config: {
+                            ...state.config,
+                            toolbar: {
+                                ...currentToolbar,
+                                ...patch,
+                                bindings: {
+                                    ...(currentToolbar.bindings || {}),
+                                    ...(patch.bindings || {}),
+                                },
+                            },
+                        },
+                    };
+                }),
+            updateWebdavConfig: (key, value) =>
+                set((state) => ({
+                    webdav: {
+                        ...state.webdav,
+                        [key]: value,
+                    },
+                })),
+            isAiConfigReady: (config, model) => isAiConfigReady(config, model),
+            openConfigDialog: (shouldPromptContinue = false, configTab = "channels") => set({ isConfigOpen: true, shouldPromptContinue, configTab }),
+            setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
+            clearPromptContinue: () => set({ shouldPromptContinue: false }),
+            saveChannelWorkflow: (channelId: string, workflow: ComfyWorkflowItem) =>
+                set((state) => {
+                    const channels = state.config.channels.map((channel) => {
+                        if (channel.id !== channelId) return channel;
+                        const currentWorkflows = getChannelWorkflows(channel);
+                        const existsIndex = currentWorkflows.findIndex((wf) => wf.id === workflow.id);
+                        const updatedWorkflow: ComfyWorkflowItem = {
+                            ...workflow,
+                            isBuiltin: false,
+                            createdAt: Date.now(),
+                        };
+                        let nextWorkflows: ComfyWorkflowItem[];
+                        if (existsIndex >= 0) {
+                            nextWorkflows = [...currentWorkflows];
+                            nextWorkflows[existsIndex] = updatedWorkflow;
+                        } else {
+                            nextWorkflows = [...currentWorkflows, updatedWorkflow];
+                        }
+
+                        const updatedChannel: ModelChannel = {
+                            ...channel,
+                            workflows: nextWorkflows,
+                        };
+
+                        const channelField = WORKFLOW_CATEGORY_TO_CHANNEL_FIELD[workflow.category];
+                        if (channelField) {
+                            const currentBound = channel[channelField] as ComfyuiWorkflow | undefined;
+                            if (!currentBound || currentBound.name === workflow.name || workflow.isDefault) {
+                                (updatedChannel as any)[channelField] = {
+                                    name: workflow.name,
+                                    json: workflow.json,
+                                    createdAt: Date.now(),
+                                    isBuiltin: false,
+                                };
+                            }
+                        }
+                        return updatedChannel;
+                    });
+
+                    return {
+                        config: {
+                            ...state.config,
+                            channels,
+                        },
+                    };
+                }),
+            resetChannelWorkflowToBuiltin: (channelId: string, workflowId: string) =>
+                set((state) => {
+                    const channels = state.config.channels.map((channel) => {
+                        if (channel.id !== channelId) return channel;
+                        const defaultWorkflows = getDefaultComfyWorkflowItems(channel);
+                        const targetDefault = defaultWorkflows.find((w) => w.id === workflowId || w.id.endsWith(workflowId.replace(/^[^-]+-/, "")));
+                        if (!targetDefault) return channel;
+
+                        const currentWorkflows = getChannelWorkflows(channel);
+                        const nextWorkflows = currentWorkflows.map((w) => (w.id === workflowId ? targetDefault : w));
+                        const updatedChannel: ModelChannel = {
+                            ...channel,
+                            workflows: nextWorkflows,
+                        };
+
+                        const channelField = WORKFLOW_CATEGORY_TO_CHANNEL_FIELD[targetDefault.category];
+                        if (channelField) {
+                            (updatedChannel as any)[channelField] = {
+                                name: targetDefault.name,
+                                json: targetDefault.json,
+                                createdAt: 0,
+                                isBuiltin: true,
+                            };
+                        }
+                        return updatedChannel;
+                    });
+
+                    return {
+                        config: {
+                            ...state.config,
+                            channels,
+                        },
+                    };
+                }),
+            saveWorkflowGlobally: (workflow: ComfyWorkflowItem) =>
+                set((state) => {
+                    const channels = state.config.channels.map((channel) => {
+                        const currentWorkflows = getChannelWorkflows(channel);
+                        const existsIndex = currentWorkflows.findIndex(
+                            (wf) => wf.id === workflow.id || (wf.category === workflow.category && wf.name === workflow.name)
+                        );
+                        const updatedWorkflow: ComfyWorkflowItem = {
+                            ...workflow,
+                            isBuiltin: false,
+                            createdAt: Date.now(),
+                        };
+                        let nextWorkflows: ComfyWorkflowItem[];
+                        if (existsIndex >= 0) {
+                            nextWorkflows = [...currentWorkflows];
+                            nextWorkflows[existsIndex] = updatedWorkflow;
+                        } else {
+                            nextWorkflows = [...currentWorkflows, updatedWorkflow];
+                        }
+
+                        const updatedChannel: ModelChannel = {
+                            ...channel,
+                            workflows: nextWorkflows,
+                        };
+
+                        const channelField = WORKFLOW_CATEGORY_TO_CHANNEL_FIELD[workflow.category];
+                        if (channelField) {
+                            (updatedChannel as any)[channelField] = {
+                                name: workflow.name,
+                                json: workflow.json,
+                                createdAt: Date.now(),
+                                isBuiltin: false,
+                            };
+                        }
+                        return updatedChannel;
+                    });
+
+                    return {
+                        config: {
+                            ...state.config,
+                            channels,
+                        },
+                    };
+                }),
+            setChannelDefaultWorkflow: (channelId: string, category: WorkflowCategory, workflowId: string) =>
+                set((state) => {
+                    const channels = state.config.channels.map((channel) => {
+                        if (channel.id !== channelId) return channel;
+
+                        const currentWorkflows = getChannelWorkflows(channel);
+                        const targetWorkflow = currentWorkflows.find(
+                            (wf) => wf.id === workflowId || (wf.category === category && wf.name === workflowId)
+                        );
+                        if (!targetWorkflow) return channel;
+
+                        const nextWorkflows = currentWorkflows.map((wf) => {
+                            if (wf.category !== category) return wf;
+                            const isSelected = wf.id === targetWorkflow.id || wf.name === targetWorkflow.name;
+                            return {
+                                ...wf,
+                                isDefault: isSelected,
+                            };
+                        });
+
+                        const updatedChannel: ModelChannel = {
+                            ...channel,
+                            workflows: nextWorkflows,
+                        };
+
+                        const channelField = WORKFLOW_CATEGORY_TO_CHANNEL_FIELD[category];
+                        if (channelField) {
+                            (updatedChannel as any)[channelField] = {
+                                name: targetWorkflow.name,
+                                json: targetWorkflow.json,
+                                createdAt: targetWorkflow.createdAt || Date.now(),
+                                isBuiltin: targetWorkflow.isBuiltin,
+                            };
+                        }
+                        return updatedChannel;
+                    });
+
+                    return {
+                        config: {
+                            ...state.config,
+                            channels,
+                        },
+                    };
+                }),
+        }),
+        {
+            name: CONFIG_STORE_KEY,
+            version: 2,
+            storage: createJSONStorage(() => localForageStorage),
+            migrate: (persistedState: any, version: number) => {
+                if (version < 1) {
+                    return {
+                        ...persistedState,
+                        config: defaultConfig,
+                    };
+                }
+                if (version < 2 && persistedState?.config) {
+                    if (persistedState.config.videoSeconds === "6") {
+                        persistedState.config.videoSeconds = "5";
+                    }
+                }
+                return persistedState;
+            },
+            partialize: (state) => ({ config: state.config, webdav: state.webdav }),
+            merge: (persisted, current) => {
+                const persistedState = (persisted || {}) as Partial<ConfigStore>;
+                const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
+                const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
+                const config = { ...defaultConfig, ...persistedConfig };
+                if (!Array.isArray(persistedConfig.channels)) config.channels = [];
+                const channels = normalizeChannels(config);
+                const models = modelOptionsFromChannels(channels);
+                const resolveOption = (value: string | undefined, fallback: string, capability: ModelCapability) => {
+                    const normalized = normalizeModelOptionValue(value, channels);
+                    if (normalized && modelMatchesCapability({ ...config, channels }, normalized, capability)) {
+                        return normalized;
+                    }
+                    const fallbackNormalized = normalizeModelOptionValue(fallback, channels);
+                    if (fallbackNormalized && modelMatchesCapability({ ...config, channels }, fallbackNormalized, capability)) {
+                        return fallbackNormalized;
+                    }
+                    const firstMatch = channels.flatMap((c) => c.models.filter((m) => m.capability === capability).map((m) => encodeChannelModel(c.id, m.name)))[0];
+                    return firstMatch || "";
+                };
+                const imageModel = resolveOption(config.imageModel || config.model, defaultConfig.imageModel, "image");
+                const defaultToolbar = defaultToolbarConfig;
+                const persistedToolbar = persistedConfig.toolbar;
+                const toolbar: ToolbarConfig = {
+                    ids: Array.isArray(persistedToolbar?.ids) ? persistedToolbar.ids : defaultToolbar.ids,
+                    showLabels: typeof persistedToolbar?.showLabels === "boolean" ? persistedToolbar.showLabels : defaultToolbar.showLabels,
+                };
+                return {
+                    ...current,
+                    webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav },
+                    config: {
+                        ...config,
+                        channelMode: "local",
+                        apiFormat: normalizeApiFormat(config.apiFormat),
+                        channels,
+                        models,
+                        model: imageModel,
+                        imageModel,
+                        videoModel: resolveOption(config.videoModel, defaultConfig.videoModel, "video"),
+                        textModel: resolveOption(config.textModel || config.model, defaultConfig.textModel, "text"),
+                        audioModel: normalizeModelOptionValue(config.audioModel || defaultConfig.audioModel, channels),
+                        audioVoice: config.audioVoice || defaultConfig.audioVoice,
+                        audioFormat: config.audioFormat || defaultConfig.audioFormat,
+                        audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
+                        audioInstructions: config.audioInstructions || "",
+                        systemPrompt: config.systemPrompt || "",
+                        reasoningEffort: config.reasoningEffort || "auto",
+                        videoSeconds: !config.videoSeconds || config.videoSeconds === "6" ? "5" : config.videoSeconds,
+                        videoMode: config.videoMode || "omni",
+                        vquality: config.vquality || "720",
+                        videoGenerateAudio: config.videoGenerateAudio || "true",
+                        videoWatermark: config.videoWatermark || "false",
+                        canvasImageCount: config.canvasImageCount || "1",
+                        toolbar,
+                    },
+                };
+            },
+        },
+    ),
+);
+
+export function useEffectiveConfig() {
+    const config = useConfigStore((state) => state.config);
+    return useMemo(() => ({ ...config, channelMode: "local" as const }), [config]);
+}
+
+/** Normalize a mixed list of raw model names or model objects into deduped ChannelModel entries. */
+export function normalizeChannelModels(models: Array<string | ChannelModel> | undefined): ChannelModel[] {
+    const seen = new Set<string>();
+    const result: ChannelModel[] = [];
+    for (const item of models || []) {
+        const name = (typeof item === "string" ? item : item?.name || "").trim();
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
+        const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
+        const comfyuiWorkflow = typeof item === "string" ? undefined : item.comfyuiWorkflow;
+        result.push({ name, capability, script, comfyuiWorkflow });
+    }
+    return result;
+}
+
+/** Local channel default models (uses local workflows with pruned/fp8 weights). */
+export function isCloudChannel(channel?: Partial<ModelChannel> | null): boolean {
+    if (!channel) return false;
+    return channel.id === "cloud" || Boolean(channel.name && channel.name.includes("雲端"));
+}
+
+export function createBuiltinModelChannel(overrides?: Partial<ModelChannel>): ModelChannel {
+    return createModelChannel({
+        id: "builtin",
+        name: "系統內建 ComfyUI",
+        comfyuiProxyUrl: "http://127.0.0.1:8188",
+        ...overrides,
+    });
+}
+
+export function createLocalModelChannel(overrides?: Partial<ModelChannel>): ModelChannel {
+    return createBuiltinModelChannel(overrides);
+}
+
+export function createCloudModelChannel(overrides?: Partial<ModelChannel>): ModelChannel {
+    return createModelChannel({
+        id: "cloud",
+        name: "雲端 ComfyUI",
+        comfyuiProxyUrl: "",
+        ...overrides,
+    });
+}
+
+function mergeBuiltinWorkflows(existingWorkflows: ComfyWorkflowItem[] | undefined, defaultWorkflows: ComfyWorkflowItem[]): ComfyWorkflowItem[] {
+    if (!Array.isArray(existingWorkflows) || existingWorkflows.length === 0) {
+        return defaultWorkflows;
+    }
+    const result = [...existingWorkflows];
+    for (const defWf of defaultWorkflows) {
+        const exists = result.some((wf) => wf.id === defWf.id || (wf.category === defWf.category && wf.name === defWf.name));
+        if (!exists) {
+            result.push(defWf);
+        }
+    }
+    return result;
+}
+
+export function createModelChannel(channel?: Partial<ModelChannel>, options?: { preprovisionComfyuiModels?: boolean }): ModelChannel {
+    const isCloud = isCloudChannel(channel);
+    const workflows = getDefaultComfyuiWorkflows(channel);
+    const defaultWorkflowItems = getDefaultComfyWorkflowItems(channel);
+    const defaultModels = COMFYUI_BUILTIN_DEFAULT_MODELS;
+    const models = normalizeChannelModels(channel?.models);
+    const result: ModelChannel = {
+        id: channel?.id?.trim() || nanoid(),
+        name: channel?.name?.trim() || (isCloud ? "雲端 ComfyUI" : "系統內建 ComfyUI"),
+        baseUrl: channel?.baseUrl !== undefined ? channel.baseUrl : "",
+        apiKey: channel?.apiKey !== undefined ? channel.apiKey : "",
+        apiFormat: "comfyui",
+        models: models.length ? models : options?.preprovisionComfyuiModels !== false ? [...defaultModels] : [],
+        comfyuiProxyUrl: channel?.comfyuiProxyUrl !== undefined ? channel.comfyuiProxyUrl : isCloud ? "" : "http://127.0.0.1:8188",
+        comfyuiProxyToken: channel?.comfyuiProxyToken !== undefined ? channel.comfyuiProxyToken : "",
+        workflows: mergeBuiltinWorkflows(channel?.workflows, defaultWorkflowItems),
+        comfyuiT2iWorkflow: channel?.comfyuiT2iWorkflow !== undefined ? channel.comfyuiT2iWorkflow : workflows.t2i,
+        comfyuiI2iWorkflow: channel?.comfyuiI2iWorkflow !== undefined ? channel.comfyuiI2iWorkflow : workflows.i2i,
+        comfyuiInpaintWorkflow: channel?.comfyuiInpaintWorkflow !== undefined ? channel.comfyuiInpaintWorkflow : workflows.inpaint,
+        comfyuiTextWorkflow: channel?.comfyuiTextWorkflow !== undefined ? channel.comfyuiTextWorkflow : workflows.text,
+        comfyuiVideoWorkflow: channel?.comfyuiVideoWorkflow !== undefined ? channel.comfyuiVideoWorkflow : workflows.video,
+        comfyuiFrameVideoWorkflow: channel?.comfyuiFrameVideoWorkflow !== undefined ? channel.comfyuiFrameVideoWorkflow : workflows.frameVideo,
+        comfyuiAudioWorkflow: channel?.comfyuiAudioWorkflow !== undefined ? channel.comfyuiAudioWorkflow : workflows.audio,
+        comfyuiFaceRefineWorkflow: channel?.comfyuiFaceRefineWorkflow !== undefined ? channel.comfyuiFaceRefineWorkflow : workflows.faceRefine,
+        comfyuiDepthVideoWorkflow: channel?.comfyuiDepthVideoWorkflow !== undefined ? channel.comfyuiDepthVideoWorkflow : workflows.depthVideo,
+    };
+    return result;
+}
+
+export function getChannelWorkflows(channel?: ModelChannel | null, category?: WorkflowCategory | WorkflowCategory[]): ComfyWorkflowItem[] {
+    if (!channel) return [];
+    const list = Array.isArray(channel.workflows) && channel.workflows.length > 0 ? channel.workflows : getDefaultComfyWorkflowItems(channel);
+    if (!category) return list;
+    if (Array.isArray(category)) {
+        return list.filter((wf) => category.includes(wf.category));
+    }
+    return list.filter((wf) => wf.category === category);
+}
+
+export { getDefaultComfyWorkflowItems } from "@/services/api/comfyui-default-workflows";
+
+export function getDefaultWorkflow(channel?: ModelChannel | null, category?: WorkflowCategory | WorkflowCategory[]): ComfyWorkflowItem | undefined {
+    const list = getChannelWorkflows(channel, category);
+    const item = list.find((wf) => wf.isDefault) || list[0];
+    if (item) return item;
+    if (category) {
+        const defaults = getDefaultComfyWorkflowItems(channel);
+        if (Array.isArray(category)) {
+            return defaults.find((wf) => category.includes(wf.category));
+        }
+        return defaults.find((wf) => wf.category === category);
+    }
+    return undefined;
+}
+
+export function findWorkflow(config: AiConfig, channelId?: string, workflowId?: string, category?: WorkflowCategory | WorkflowCategory[]): ComfyWorkflowItem | undefined {
+    const channel = channelId ? config.channels.find((c) => c.id === channelId) : config.channels[0];
+    if (!channel) return undefined;
+    const list = getChannelWorkflows(channel, category);
+    if (workflowId) {
+        const found = list.find((wf) => wf.id === workflowId);
+        if (found) return found;
+        const defaultFallback = getDefaultComfyWorkflowItems(channel).find((wf) => wf.id === workflowId);
+        if (defaultFallback) return defaultFallback;
+    }
+    if (category) {
+        return getDefaultWorkflow(channel, category);
+    }
+    return list[0];
+}
+
+export function encodeChannelModel(channelId: string, model: string) {
+    return `${channelId}${CHANNEL_MODEL_SEPARATOR}${model.trim()}`;
+}
+
+export function isChannelModelValue(value: string) {
+    return value.includes(CHANNEL_MODEL_SEPARATOR);
+}
+
+export function decodeChannelModel(value: string) {
+    const index = value.indexOf(CHANNEL_MODEL_SEPARATOR);
+    if (index < 0) return null;
+    return { channelId: value.slice(0, index), model: value.slice(index + CHANNEL_MODEL_SEPARATOR.length) };
+}
+
+export function modelOptionName(value: string) {
+    return decodeChannelModel(value)?.model || value;
+}
+
+export function modelOptionLabel(config: AiConfig, value: string) {
+    const decoded = decodeChannelModel(value);
+    if (!decoded) return value;
+    const channel = config.channels.find((item) => item.id === decoded.channelId);
+    return channel ? `${decoded.model}（${channel.name}）` : decoded.model;
+}
+
+export function modelOptionsFromChannels(channels: ModelChannel[]) {
+    return uniqueModelOptions(channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model.name))));
+}
+
+export function normalizeModelOptionValue(value: string | undefined, channels: ModelChannel[]) {
+    const model = (value || "").trim();
+    if (!model) return "";
+    const decoded = decodeChannelModel(model);
+    if (decoded) {
+        const channel = channels.find((item) => item.id === decoded.channelId);
+        return channel && channel.models.some((item) => item.name === decoded.model) ? model : "";
+    }
+    const channel = channels.find((item) => item.models.some((entry) => entry.name === model)) || channels[0];
+    return channel && channel.models.some((item) => item.name === model) ? encodeChannelModel(channel.id, model) : model;
+}
+
+export function resolveModelChannel(config: AiConfig, value: string) {
+    if (config.channelId) {
+        const matched = config.channels.find((channel) => channel.id === config.channelId);
+        if (matched) return matched;
+    }
+    const decoded = decodeChannelModel(value);
+    if (decoded) {
+        const matched = config.channels.find((channel) => channel.id === decoded.channelId);
+        if (matched) return matched;
+    }
+    const model = decoded?.model || value;
+    const cap = guessCapability(model);
+    const preferredCand = cap === "video" ? config.videoModel : cap === "text" ? config.textModel : cap === "audio" ? config.audioModel : config.imageModel;
+    const modelCandidates = [preferredCand, config.model, config.videoModel, config.imageModel, config.textModel, config.audioModel].filter(Boolean) as string[];
+    for (const cand of modelCandidates) {
+        if (!cand) continue;
+        const candDecoded = decodeChannelModel(cand);
+        if (candDecoded && (!value || candDecoded.model === value)) {
+            const matched = config.channels.find((channel) => channel.id === candDecoded.channelId);
+            if (matched) return matched;
+        }
+    }
+    const matched = config.channels.find((channel) => channel.models.some((item) => item.name === model));
+    return matched || config.channels[0] || createBuiltinModelChannel({ models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })) });
+}
+
+export function resolveModelRequestConfig(config: AiConfig, value: string) {
+    const channel = resolveModelChannel(config, value);
+    return {
+        ...config,
+        model: modelOptionName(value || config.model),
+        baseUrl: channel.baseUrl || channel.comfyuiProxyUrl,
+        apiKey: channel.apiKey || channel.comfyuiProxyToken,
+        apiFormat: channel.apiFormat,
+    };
+}
+
+function normalizeChannels(config: AiConfig) {
+    const persistedChannels = Array.isArray(config.channels) ? config.channels : [];
+    const channels = persistedChannels.map((channel, index) => {
+        const isCloud = isCloudChannel(channel);
+        const defaultId = channel.id || (isCloud ? "cloud" : index === 0 ? "builtin" : `channel-${index + 1}`);
+        const defaultName = channel.name || (defaultId === "cloud" ? "雲端 ComfyUI" : defaultId === "builtin" ? "系統內建 ComfyUI" : defaultId === "local" ? "本地 ComfyUI" : i18n.t("config.channels.indexedName", { index: index + 1 }));
+        return createModelChannel(
+            {
+                ...channel,
+                id: defaultId,
+                name: defaultName,
+                models: normalizeChannelModels(channel.models),
+            },
+            { preprovisionComfyuiModels: false },
+        );
+    });
+    if (!channels.length) {
+        channels.push(createBuiltinModelChannel());
+    }
+    return channels;
+}
+
+export function defaultBaseUrlForApiFormat(_apiFormat?: ApiCallFormat) {
+    return "";
+}
+
+export function normalizeApiFormat(_apiFormat?: unknown): ApiCallFormat {
+    return "comfyui";
+}
+
+function uniqueModelOptions(models: string[]) {
+    return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)));
+}
+
+export function buildApiUrl(baseUrl: string, path: string) {
+    const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
+    const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
+    const apiBaseUrl = lowerBaseUrl.endsWith("/v1") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
+    return `${apiBaseUrl}${path}`;
+}

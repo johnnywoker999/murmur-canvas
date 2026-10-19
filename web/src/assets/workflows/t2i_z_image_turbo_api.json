@@ -1,0 +1,188 @@
+{
+  "9": {
+    "inputs": {
+      "filename_prefix": "z-image-turbo",
+      "images": [
+        "57:8",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "output_image"
+    }
+  },
+  "69": {
+    "inputs": {
+      "value": "電影級寫實水下攝影。2097年被淹沒的舊城市街道。**前景：**一輛嚴重生鏽的2020年代共享單車橫倒在泥沙柏油路上，車身長滿水藻、貝類，漆面剝落。**中景：**一名穿著深灰黑色、帶有真實磨損痕跡的實用主義深水作業服的打撈員，正側身遊過，背對鏡頭。他的頭燈在渾濁的水中投射出極其逼真的強烈光柱，照亮了水中的懸浮顆粒、細小氣泡以及前景的單車。**遠景：**泡水的破舊居民樓，牆體開裂，依稀可見鏽蝕的防盜窗，逐漸隱沒在藍綠色的水霧中。\n**真實光影：**深青藍與灰綠色調。遙遠上方透下微弱的自然體積光（丁達爾效應），帶有水下焦散光斑，光線衰減真實，陰影深邃且富有層次。\n**鏡頭構圖：**35mm廣角鏡頭，低機位微仰視。人物比例剋制，不佔滿畫面，突顯沉沒街道巨大、安靜的空間縱深感。極致細節，逼真材質，國家地理攝影風格。豎幅比例。"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "prompt"
+    }
+  },
+  "70": {
+    "inputs": {
+      "value": 1088
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "width"
+    }
+  },
+  "71": {
+    "inputs": {
+      "value": 1920
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "height"
+    }
+  },
+  "72": {
+    "inputs": {
+      "value": 287105494178575
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "seed"
+    }
+  },
+  "57:30": {
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "select_models_clip"
+    }
+  },
+  "57:29": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "載入VAE"
+    }
+  },
+  "57:33": {
+    "inputs": {
+      "conditioning": [
+        "57:27",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "條件零化"
+    }
+  },
+  "57:8": {
+    "inputs": {
+      "samples": [
+        "57:3",
+        0
+      ],
+      "vae": [
+        "57:29",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解碼"
+    }
+  },
+  "57:28": {
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "select_models_diffusion_models"
+    }
+  },
+  "57:27": {
+    "inputs": {
+      "text": [
+        "69",
+        0
+      ],
+      "clip": [
+        "57:30",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本編碼"
+    }
+  },
+  "57:13": {
+    "inputs": {
+      "width": [
+        "70",
+        0
+      ],
+      "height": [
+        "71",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "空Latent影像（SD3）"
+    }
+  },
+  "57:11": {
+    "inputs": {
+      "shift": 3,
+      "model": [
+        "57:28",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "取樣演算法（AuraFlow）"
+    }
+  },
+  "57:3": {
+    "inputs": {
+      "seed": [
+        "72",
+        0
+      ],
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "57:11",
+        0
+      ],
+      "positive": [
+        "57:27",
+        0
+      ],
+      "negative": [
+        "57:33",
+        0
+      ],
+      "latent_image": [
+        "57:13",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K取樣器"
+    }
+  }
+}
